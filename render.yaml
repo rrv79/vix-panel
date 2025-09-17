@@ -2,18 +2,12 @@ services:
   - type: web
     name: vix-panel-backend
     env: python
-    # opcional: o Render pode mudar os nomes de plano; se der erro, remova "plan"
-    plan: free
     buildCommand: "pip install -r requirements.txt"
     startCommand: "gunicorn app:app --bind 0.0.0.0:$PORT --preload"
     healthCheckPath: "/"
     autoDeploy: true
 
-  - type: static_site
+  - type: static
     name: vix-panel-frontend
     buildCommand: ""
     publishPath: "static-site"
-    # Variáveis para docs/aplicações estáticas são aceitas; use se quiser referenciar no HTML via template build
-    envVars:
-      - key: BACKEND_URL
-        value: "https://vix-panel-backend.onrender.com/api/v1/vix/departures"
