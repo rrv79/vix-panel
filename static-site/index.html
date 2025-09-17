@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Painel de Partidas • Aeroporto de Vitória (VIX)</title>
+  <style>
+    :root{ --bg:#0b1220;--card:#0f172a;--muted:#9bb0d9;--txt:#e8eefc;--ok:#22c55e;--warn:#f59e0b;--bad:#ef4444;--info:#38bdf8;--accent:#60a5fa;--grid:#1f2a44 }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:linear-gradient(180deg,var(--bg),#0e172a);color:var(--txt);font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+    .wrap{min-height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:16px;padding:16px}
+    header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
+    h1{margin:0;font-weight:800;letter-spacing:.5px}
+    .sub{color:var(--muted);font-weight:600}
+    .clock{font-variant-numeric:tabular-nums; font-size: clamp(18px, 2.5vw, 28px)}
+
+    .board{background:rgba(17,26,43,.75);border:1px solid #1d2740;border-radius:20px;overflow:hidden;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+    table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+    thead th{position:sticky;top:0;background:#0f1629;padding:12px 10px;border-bottom:1px solid var(--grid);text-align:left;font-size: clamp(16px, 2vw, 22px)}
+    tbody td{padding:12px 10px;border-bottom:1px dashed #1f2a44;font-size: clamp(18px, 2.6vw, 28px)}
+    tbody tr:nth-child(even){background:rgba(255,255,255,0.015)}
+    .col-hora{width:10ch}
+    .col-cia{min-width:18ch}
+    .col-voo{width:12ch;font-weight:700}
+    .col-dest{min-width:24ch}
+    .col-portao{width:8ch;text-align:center}
+    .col-prev{width:10ch}
+    .col-status{min-width:18ch;font-weight:800}
+
+    .tag{display:inline-block;padding:6px 10px;border-radius:999px;font-size: clamp(14px, 1.8vw, 18px);font-weight:800;line-height:1}
+    .s-scheduled{background:#0b3b7a;color:#bde0ff}
+    .s-active{background:#053a2a;color:#b8f3e3}
+    .s-departed{background:#11330b;color:#c7f9cc}
+    .s-delayed{background:#3b2605;color:#ffe3ac}
+    .s-cancelled{background:#3b0b0b;color:#ffd6d6}
+    .s-diverted{background:#311353;color:#e5d5ff}
+    .s-unknown{background:#2b2b2b;color:#eaeaea}
+
+    .footer{display:flex;justify-content:space-between;align-items:center;color:var(--muted);gap:12px}
+    .pill{border:1px solid #224; padding:6px 10px;border-radius:999px}
+
+    .banner{display:none;align-items:center;gap:10px;margin-top:8px;padding:8px 12px;border-radius:12px;border:1px solid #3b1d1d;background:rgba(191,46,46,.1);color:#ffd6d6}
+    .banner.show{display:flex}
+    .banner .code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#2a1414;border:1px solid #5c2b2b;border-radius:8px;padding:2px 6px}
+
+    @media (orientation:portrait){ .wrap{padding:20px} h1{font-size: clamp(22px, 5.5vw, 48px)} .sub{font-size: clamp(14px, 2.5vw, 22px)} }
+    @media (orientation:landscape){ h1{font-size: clamp(20px, 3.2vw, 38px)} .sub{font-size: clamp(13px, 1.6vw, 20px)} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Partidas — Aeroporto de Vitória <span class="sub">(VIX)</span></h1>
+        <div class="sub">Exibição otimizada para TV em modo retrato</div>
+        <div id="errBanner" class="banner"></div>
+      </div>
+      <div class="clock" id="clock">--:--</div>
+    </header>
+
+    <section class="board">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-hora">Hora</th>
+            <th class="col-cia">Cia.</th>
+            <th class="col-voo">Voo</th>
+            <th class="col-dest">Destino</th>
+            <th class="col-portao">Portão</th>
+            <th class="col-prev">Previsto</th>
+            <th class="col-status">Status</th>
+          </tr>
+        </thead>
+        <tbody id="rows">
+          <tr><td colspan="7" style="text-align:center;padding:28px;color:var(--muted)">Carregando dados…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="footer">
+      <div id="lastUpdate" class="pill">Atualizado: --</div>
+      <div class="pill" id="dataSource">Fonte: Backend</div>
+    </div>
+  </div>
+
+<script>
+const AUTO_REFRESH_MS = 120000;   // 2 min
+const VISIBLE_ROWS = 12;          // top 12
+const SCROLL_INTERVAL_MS = 8000;  // 8s
+let allRows = []; let page=0; let scrollTimer=null;
+
+function getURLParam(name){ const u = new URL(location.href); return u.searchParams.get(name); }
+const CUSTOM_SOURCE_URL = getURLParam('src') || '/api/v1/vix/departures';
+
+async function fetchFlights(){
+  const res = await fetch(CUSTOM_SOURCE_URL);
+  if(!res.ok) throw new Error(`Falha ao consultar backend (${res.status})`);
+  return await res.json();
+}
+
+function timeToMinutes(hhmm){ if(!hhmm||!/^[0-2]?\\d:\\d{2}$/.test(hhmm)) return null; const [h,m]=hhmm.split(':').map(Number); return h*60+m; }
+function nowMinutes(){ const d=new Date(); return d.getHours()*60+d.getMinutes(); }
+function filterUpcoming(rows){ const now=nowMinutes(); return rows.filter(r=>{ const t=timeToMinutes(r.time); return t!==null && t>=now; }); }
+
+function statusTagClass(s){ const map={scheduled:'s-scheduled',active:'s-active',departed:'s-departed',delayed:'s-delayed',cancelled:'s-cancelled',diverted:'s-diverted',unknown:'s-unknown'}; return map[s]||'s-unknown'; }
+function statusLabel(s){ const map={scheduled:'Programado',active:'Embarque/Taxiando',departed:'Partiu',delayed:'Atrasado',cancelled:'Cancelado',diverted:'Alternado',unknown:'—'}; return map[s]||'—'; }
+
+function rowHTML(r){ return `
+  <tr>
+    <td class="col-hora">${r.time}</td>
+    <td class="col-cia">${r.airline}</td>
+    <td class="col-voo">${r.flight}</td>
+    <td class="col-dest">${r.destination}</td>
+    <td class="col-portao">${r.gate||'—'}</td>
+    <td class="col-prev">${r.estimate||'—'}</td>
+    <td class="col-status"><span class="tag ${statusTagClass((r.status||'unknown').toLowerCase())}">${statusLabel((r.status||'unknown').toLowerCase())}</span></td>
+  </tr>`; }
+
+function renderWindow(){
+  const tbody=document.getElementById('rows');
+  const total=allRows.length;
+  if(total===0){ tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--muted)">Sem dados para exibir agora.</td></tr>`; return; }
+  allRows.sort((a,b)=> (a.time||'').localeCompare(b.time||''));
+  if(total<=VISIBLE_ROWS){ tbody.innerHTML = allRows.map(rowHTML).join(''); return; }
+  const start=(page*VISIBLE_ROWS)%total; const pageRows=[]; for(let i=0;i<VISIBLE_ROWS;i++){ pageRows.push(allRows[(start+i)%total]); }
+  tbody.innerHTML = pageRows.map(rowHTML).join('');
+}
+
+function startAutoScroll(){ if(scrollTimer) clearInterval(scrollTimer); if(allRows.length<=VISIBLE_ROWS) return; scrollTimer=setInterval(()=>{ page++; renderWindow(); }, SCROLL_INTERVAL_MS); }
+
+async function refresh(){
+  const elLU=document.getElementById('lastUpdate'); const elBanner=document.getElementById('errBanner');
+  try{
+    const raw = await fetchFlights();
+    const upcoming = filterUpcoming(raw);
+    allRows = upcoming; page=0; renderWindow(); startAutoScroll();
+    elLU.textContent = `Atualizado: ${new Date().toLocaleString('pt-BR')}`;
+    elBanner.classList.remove('show'); elBanner.textContent='';
+  }catch(e){
+    allRows=[]; renderWindow();
+    elLU.textContent = `Falha ao atualizar: ${e.message||e}`;
+    elBanner.innerHTML = `⚠️ <strong>Erro:</strong> ${e.message||e}`;
+    elBanner.classList.add('show');
+  }
+}
+
+function tick(){ document.getElementById('clock').textContent = new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}) }
+setInterval(tick,1000); tick();
+refresh();
+setInterval(refresh, AUTO_REFRESH_MS);
+</script>
+</body>
+</html>
